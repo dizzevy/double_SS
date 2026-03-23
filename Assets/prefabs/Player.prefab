@@ -43,6 +43,9 @@ GameObject:
   - component: {fileID: 7567858340365493313}
   - component: {fileID: 6286090706199391997}
   - component: {fileID: 7692914654935387243}
+  - component: {fileID: 2152961211262471763}
+  - component: {fileID: 3532153900417211228}
+  - component: {fileID: 5571428395034102641}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -143,6 +146,107 @@ MonoBehaviour:
   slideStartBoost: 1.2
   slideDuration: 0.7
   slideFriction: 10
+  bodyPushVelocity: 1.4
+--- !u!114 &2152961211262471763
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1914947445556125849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5d3c858b4db94037bd2947486f93ab9a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerInventory
+  capacity: 16
+  slots:
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
+  selectedSlotIndex: 0
+--- !u!114 &3532153900417211228
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1914947445556125849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a29f4f3f55664629a21652f7e6462764, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerItemInteractor
+  actionMapName: Player
+  interactActionName: Interact
+  dropActionName: Drop
+  storeActionName: Store
+  nextSlotActionName: Next
+  previousSlotActionName: Previous
+  fallbackInteractKey: 19
+  fallbackDropKey: 21
+  fallbackStoreKey: 20
+  useNumberHotbarKeys: 1
+  numberHotbarSlots: 10
+  pickupDistance: 3
+  pickupMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  triggerInteraction: 1
+  viewTransform: {fileID: 0}
+  holdPointName: HoldPoint
+  holdPointLocalPosition: {x: 0.35, y: -0.45, z: 0.55}
+  holdPointLocalEulerAngles: {x: 0, y: 0, z: 0}
+  dropForwardSpeed: 3
+  dropUpSpeed: 1
+  throwSpread: 2
+  throwSpinRange: {x: 4, y: 9}
+  ignorePlayerCollisionAfterDrop: 0.2
+  inventory: {fileID: 0}
+--- !u!114 &5571428395034102641
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1914947445556125849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8b5e89c43f24c6bb209595a749dd472, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerFirstPersonVisibility
+  firstPersonCamera: {fileID: 1700751611184844967}
+  visualsRoot: {fileID: 7966381121926697368}
+  hiddenLayerName: LocalPlayerBody
 --- !u!1 &2700761462241912362
 GameObject:
   m_ObjectHideFlags: 0
@@ -187,6 +291,7 @@ GameObject:
   - component: {fileID: 1700751611184844967}
   - component: {fileID: 4795837537359670934}
   - component: {fileID: 7734243187352364374}
+  - component: {fileID: 3082852339854546706}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -203,7 +308,7 @@ Transform:
   m_GameObject: {fileID: 4415148559068966028}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0.291}
+  m_LocalPosition: {x: 0, y: 0, z: 0.221}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -241,7 +346,7 @@ Camera:
     y: 0
     width: 1
     height: 1
-  near clip plane: 0.3
+  near clip plane: 0.05
   far clip plane: 1000
   field of view: 60
   orthographic: 0
@@ -313,6 +418,28 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &3082852339854546706
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4415148559068966028}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 84350906bf2d41179a8e59a9dd3d4d42, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FirstPersonCameraCollision
+  pivot: {fileID: 6163910758179672309}
+  collisionCamera: {fileID: 1700751611184844967}
+  obstacleMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  collisionRadius: 0.12
+  wallOffset: 0.02
+  includeNearClipPadding: 1
+  smoothing: 20
+  triggerInteraction: 1
 --- !u!1 &6804459309569676102
 GameObject:
   m_ObjectHideFlags: 0

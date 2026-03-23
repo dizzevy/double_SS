@@ -2,6 +2,8 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(CharacterController))]
+[RequireComponent(typeof(PlayerInventory))]
+[RequireComponent(typeof(PlayerItemInteractor))]
 public class PlayerMotor : MonoBehaviour
 {
     [Header("Input")]
@@ -40,6 +42,9 @@ public class PlayerMotor : MonoBehaviour
     [SerializeField] private float slideDuration = 0.7f;
     [SerializeField] private float slideFriction = 10f;
 
+    [Header("Physics Interaction")]
+    [SerializeField] private float bodyPushVelocity = 1.4f;
+
     private CharacterController characterController;
 
     private Vector3 horizontalVelocity;
@@ -54,6 +59,7 @@ public class PlayerMotor : MonoBehaviour
     {
         characterController = GetComponent<CharacterController>();
         SetControllerHeight(standingHeight);
+        EnsureGameplayComponents();
     }
 
     private void OnEnable()
@@ -126,6 +132,19 @@ public class PlayerMotor : MonoBehaviour
 
         UpdateCrouchHeight(dt);
         UpdateViewHeight(dt);
+    }
+
+    private void EnsureGameplayComponents()
+    {
+        if (GetComponent<PlayerInventory>() == null)
+        {
+            gameObject.AddComponent<PlayerInventory>();
+        }
+
+        if (GetComponent<PlayerItemInteractor>() == null)
+        {
+            gameObject.AddComponent<PlayerItemInteractor>();
+        }
     }
 
     private void TryStartSlide(bool grounded, bool crouchHeld, bool sprintHeld, Vector2 moveInput)
@@ -230,5 +249,27 @@ public class PlayerMotor : MonoBehaviour
 
         int layerMask = ~(1 << gameObject.layer);
         return !Physics.CheckCapsule(capsuleBottom, capsuleTop, radius, layerMask, QueryTriggerInteraction.Ignore);
+    }
+
+    private void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        if (bodyPushVelocity <= 0f)
+        {
+            return;
+        }
+
+        Rigidbody hitBody = hit.collider.attachedRigidbody;
+        if (hitBody == null || hitBody.isKinematic)
+        {
+            return;
+        }
+
+        Vector3 pushDirection = new Vector3(hit.moveDirection.x, 0f, hit.moveDirection.z);
+        if (pushDirection.sqrMagnitude < 0.0001f)
+        {
+            return;
+        }
+
+        hitBody.AddForce(pushDirection.normalized * bodyPushVelocity, ForceMode.VelocityChange);
     }
 }
