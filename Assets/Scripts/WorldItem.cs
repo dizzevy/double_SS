@@ -1,16 +1,11 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 [DisallowMultipleComponent]
 public class WorldItem : MonoBehaviour
 {
-    private enum ColliderSetupMode
-    {
-        UseExisting = 0,
-        AutoBoxProxy = 1
-    }
-
     [Header("Item")]
     [SerializeField] private ItemDefinition definition;
     [SerializeField] private string itemIdOverride;
@@ -28,16 +23,18 @@ public class WorldItem : MonoBehaviour
 
     [Header("Physics")]
     [SerializeField] private bool autoCreateRigidbody = true;
-    [SerializeField] private ColliderSetupMode colliderSetupMode = ColliderSetupMode.UseExisting;
     [SerializeField] private string colliderProxyName = "ColliderProxy";
-    [SerializeField] private bool disableSourceCollidersWhenUsingProxy = true;
-    [SerializeField] private bool preferExistingPrimitiveColliders = true;
+    [SerializeField] private bool forceConvexMeshColliders = true;
     [SerializeField] private bool disableCollidersWhileHeld = true;
     [SerializeField] private bool includeInactiveGeometry;
     [SerializeField, Min(0.5f)] private float autoBoundsMergeDistanceFactor = 3f;
     [SerializeField, Min(1f)] private float autoBoundsOutlierVolumeFactor = 12f;
     [SerializeField, Min(0f)] private float fallbackLinearDamping = 1.8f;
     [SerializeField, Min(0f)] private float fallbackAngularDamping = 2.4f;
+    [SerializeField, Min(0.5f)] private float maxThrowSpeed = 10f;
+    [SerializeField, Min(0.5f)] private float maxThrowAngularSpeed = 20f;
+    [SerializeField, Min(1f)] private float maxColliderToVisualVolumeFactor = 20f;
+    [SerializeField, Min(1f)] private float maxColliderToVisualExtentFactor = 4f;
 
     [Header("Settling")]
     [SerializeField] private bool autoSleepWhenStill = true;
@@ -56,6 +53,7 @@ public class WorldItem : MonoBehaviour
     private float pickupAllowedAt;
     private float settleTimer;
     private Coroutine collisionIgnoreRoutine;
+    private bool canUseDynamicRigidbody = true;
 
     public ItemDefinition Definition => definition;
     public int Quantity => Mathf.Max(1, quantity);
@@ -123,6 +121,10 @@ public class WorldItem : MonoBehaviour
         dropSurfaceLift = Mathf.Max(0f, dropSurfaceLift);
         autoBoundsMergeDistanceFactor = Mathf.Max(0.5f, autoBoundsMergeDistanceFactor);
         autoBoundsOutlierVolumeFactor = Mathf.Max(1f, autoBoundsOutlierVolumeFactor);
+        maxThrowSpeed = Mathf.Max(0.5f, maxThrowSpeed);
+        maxThrowAngularSpeed = Mathf.Max(0.5f, maxThrowAngularSpeed);
+        maxColliderToVisualVolumeFactor = Mathf.Max(1f, maxColliderToVisualVolumeFactor);
+        maxColliderToVisualExtentFactor = Mathf.Max(1f, maxColliderToVisualExtentFactor);
 
 #if UNITY_EDITOR
         if (!Application.isPlaying)
@@ -232,14 +234,19 @@ public class WorldItem : MonoBehaviour
         SnapToHoldPose();
         transform.SetParent(null, true);
 
-        if (dropSurfaceLift > 0f)
-        {
-            transform.position += Vector3.up * dropSurfaceLift;
-        }
+        EnsureColliderSetup();
 
         if (disableCollidersWhileHeld)
         {
             SetCollidersEnabled(true);
+        }
+
+        CacheColliders();
+
+        float safeLift = Mathf.Max(dropSurfaceLift, ComputeSafeDropLift());
+        if (safeLift > 0f)
+        {
+            transform.position += Vector3.up * safeLift;
         }
 
         Physics.SyncTransforms();
@@ -247,15 +254,27 @@ public class WorldItem : MonoBehaviour
         if (body != null)
         {
             body.constraints = cachedConstraints;
-            body.isKinematic = false;
-            body.useGravity = true;
             body.detectCollisions = true;
             body.interpolation = RigidbodyInterpolation.Interpolate;
-            body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
             ApplyDampingDefaults();
 
-            body.linearVelocity = throwVelocity;
-            body.angularVelocity = throwAngularVelocity;
+            if (canUseDynamicRigidbody)
+            {
+                body.isKinematic = false;
+                body.useGravity = true;
+                body.linearVelocity = Vector3.ClampMagnitude(throwVelocity, maxThrowSpeed);
+                body.angularVelocity = Vector3.ClampMagnitude(throwAngularVelocity, maxThrowAngularSpeed);
+            }
+            else
+            {
+                body.isKinematic = true;
+                body.useGravity = false;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+                TrySnapKinematicDropToGround();
+            }
+
             body.WakeUp();
         }
 
@@ -348,40 +367,108 @@ public class WorldItem : MonoBehaviour
     private void EnsureColliderSetup()
     {
         ResolveProxyReferenceIfMissing();
-
-        if (colliderSetupMode == ColliderSetupMode.UseExisting)
-        {
-            DisableLegacyProxyObjects();
-            SetProxyActive(false);
-            EnsureFallbackColliderIfNone();
-            return;
-        }
-
-        if (preferExistingPrimitiveColliders && HasAnyPrimitiveCollider())
-        {
-            SetProxyActive(false);
-            return;
-        }
-
-        EnsureColliderProxy();
-        SetProxyActive(true);
-
-        if (disableSourceCollidersWhenUsingProxy)
-        {
-            DisableNonProxyColliders();
-        }
+        SanitizeMeshColliders();
+        DisableLegacyProxyObjects();
+        SetProxyActive(false);
+        EnableNonProxyColliders();
+        DisableOutlierCollidersByVisualBounds();
+        UpdateDynamicPhysicsSupportFlag();
+        ApplyBodySafetyMode();
     }
 
     private void EnsureFallbackColliderIfNone()
     {
-        if (HasAnyNonProxyCollider())
+        // Intentionally empty: in strict mode we never create colliders automatically.
+    }
+
+    private void DisableOutlierCollidersByVisualBounds()
+    {
+        if (!TryGetVisualBounds(out Bounds visualBounds))
         {
             return;
         }
 
-        BoxCollider fallback = gameObject.AddComponent<BoxCollider>();
-        fallback.center = Vector3.zero;
-        fallback.size = Vector3.one * 0.4f;
+        float visualVolume = Mathf.Max(EstimateVolume(visualBounds.size), 0.000001f);
+        float visualExtent = Mathf.Max(visualBounds.extents.magnitude, 0.01f);
+
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+        int validColliderCount = 0;
+        int outlierCount = 0;
+        Collider smallestOutlier = null;
+        float smallestOutlierVolume = float.PositiveInfinity;
+
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider colliderComponent = colliders[i];
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger || IsProxyCollider(colliderComponent))
+            {
+                continue;
+            }
+
+            validColliderCount++;
+
+            Bounds colliderBounds = colliderComponent.bounds;
+            float colliderVolume = EstimateVolume(colliderBounds.size);
+            float colliderExtent = colliderBounds.extents.magnitude;
+
+            bool volumeOutlier = colliderVolume > visualVolume * maxColliderToVisualVolumeFactor;
+            bool extentOutlier = colliderExtent > visualExtent * maxColliderToVisualExtentFactor;
+
+            if (volumeOutlier || extentOutlier)
+            {
+                colliderComponent.enabled = false;
+                outlierCount++;
+
+                if (colliderVolume < smallestOutlierVolume)
+                {
+                    smallestOutlierVolume = colliderVolume;
+                    smallestOutlier = colliderComponent;
+                }
+            }
+        }
+
+        if (validColliderCount > 0 && outlierCount >= validColliderCount && smallestOutlier != null)
+        {
+            smallestOutlier.enabled = true;
+        }
+    }
+
+    private bool TryGetVisualBounds(out Bounds bounds)
+    {
+        bounds = default;
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(includeInactiveGeometry);
+        bool hasBounds = false;
+
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer rendererComponent = renderers[i];
+            if (rendererComponent == null)
+            {
+                continue;
+            }
+
+            if (!includeInactiveGeometry && (!rendererComponent.enabled || !rendererComponent.gameObject.activeInHierarchy))
+            {
+                continue;
+            }
+
+            if (colliderProxy != null && rendererComponent.transform.IsChildOf(colliderProxy))
+            {
+                continue;
+            }
+
+            if (!hasBounds)
+            {
+                bounds = rendererComponent.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(rendererComponent.bounds);
+            }
+        }
+
+        return hasBounds;
     }
 
     private bool HasAnyPrimitiveCollider()
@@ -392,7 +479,7 @@ public class WorldItem : MonoBehaviour
         for (int i = 0; i < colliders.Length; i++)
         {
             Collider colliderComponent = colliders[i];
-            if (colliderComponent == null || !colliderComponent.enabled || IsProxyCollider(colliderComponent))
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger || IsProxyCollider(colliderComponent))
             {
                 continue;
             }
@@ -406,6 +493,69 @@ public class WorldItem : MonoBehaviour
         return false;
     }
 
+    private bool HasAnyMeshCollider()
+    {
+        ResolveProxyReferenceIfMissing();
+
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider colliderComponent = colliders[i];
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger || IsProxyCollider(colliderComponent))
+            {
+                continue;
+            }
+
+            if (colliderComponent is MeshCollider)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void SanitizeMeshColliders()
+    {
+        MeshCollider[] meshColliders = GetComponentsInChildren<MeshCollider>(true);
+        for (int i = 0; i < meshColliders.Length; i++)
+        {
+            MeshCollider meshCollider = meshColliders[i];
+            if (meshCollider == null || IsProxyCollider(meshCollider))
+            {
+                continue;
+            }
+
+            if (meshCollider.sharedMesh == null)
+            {
+                meshCollider.enabled = false;
+                continue;
+            }
+
+            if (!meshCollider.convex && forceConvexMeshColliders)
+            {
+                TrySetMeshColliderConvex(meshCollider);
+            }
+        }
+    }
+
+    private static void TrySetMeshColliderConvex(MeshCollider meshCollider)
+    {
+        if (meshCollider == null)
+        {
+            return;
+        }
+
+        try
+        {
+            meshCollider.convex = true;
+        }
+        catch
+        {
+            meshCollider.convex = false;
+        }
+    }
+
     private bool HasAnyNonProxyCollider()
     {
         ResolveProxyReferenceIfMissing();
@@ -414,7 +564,7 @@ public class WorldItem : MonoBehaviour
         for (int i = 0; i < colliders.Length; i++)
         {
             Collider colliderComponent = colliders[i];
-            if (colliderComponent == null || IsProxyCollider(colliderComponent))
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger || IsProxyCollider(colliderComponent))
             {
                 continue;
             }
@@ -638,6 +788,25 @@ public class WorldItem : MonoBehaviour
         }
     }
 
+    private void EnableNonProxyColliders()
+    {
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider colliderComponent = colliders[i];
+            if (colliderComponent == null)
+            {
+                continue;
+            }
+
+            bool isProxyCollider = colliderProxy != null && colliderComponent.transform.IsChildOf(colliderProxy);
+            if (!isProxyCollider)
+            {
+                colliderComponent.enabled = true;
+            }
+        }
+    }
+
     private void SetProxyActive(bool active)
     {
         ResolveProxyReferenceIfMissing();
@@ -665,30 +834,13 @@ public class WorldItem : MonoBehaviour
         for (int i = 0; i < allColliders.Length; i++)
         {
             Collider colliderComponent = allColliders[i];
-            if (colliderComponent == null)
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger)
             {
                 continue;
             }
 
-            bool isProxy = IsProxyCollider(colliderComponent);
-
-            if (colliderSetupMode == ColliderSetupMode.UseExisting)
+            if (IsProxyCollider(colliderComponent))
             {
-                if (!isProxy)
-                {
-                    filtered.Add(colliderComponent);
-                }
-
-                continue;
-            }
-
-            if (disableSourceCollidersWhenUsingProxy)
-            {
-                if (isProxy)
-                {
-                    filtered.Add(colliderComponent);
-                }
-
                 continue;
             }
 
@@ -696,6 +848,85 @@ public class WorldItem : MonoBehaviour
         }
 
         worldColliders = filtered.ToArray();
+        UpdateDynamicPhysicsSupportFlag();
+    }
+
+    private void UpdateDynamicPhysicsSupportFlag()
+    {
+        bool hasPhysicalCollider = false;
+        bool hasDynamicSafeCollider = false;
+        bool hasConcaveMeshCollider = false;
+
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider colliderComponent = colliders[i];
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger || IsProxyCollider(colliderComponent))
+            {
+                continue;
+            }
+
+            hasPhysicalCollider = true;
+
+            if (colliderComponent is MeshCollider meshCollider)
+            {
+                if (meshCollider.sharedMesh == null)
+                {
+                    continue;
+                }
+
+                if (meshCollider.convex)
+                {
+                    hasDynamicSafeCollider = true;
+                }
+                else
+                {
+                    hasConcaveMeshCollider = true;
+                }
+
+                continue;
+            }
+
+            hasDynamicSafeCollider = true;
+        }
+
+        canUseDynamicRigidbody = hasPhysicalCollider && hasDynamicSafeCollider && !hasConcaveMeshCollider;
+    }
+
+    private void ApplyBodySafetyMode()
+    {
+        if (body == null)
+        {
+            return;
+        }
+
+        if (isHeld)
+        {
+            return;
+        }
+
+        if (canUseDynamicRigidbody)
+        {
+            body.isKinematic = false;
+            body.useGravity = true;
+            body.detectCollisions = true;
+            body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+
+            if (body.interpolation == RigidbodyInterpolation.None)
+            {
+                body.interpolation = RigidbodyInterpolation.Interpolate;
+            }
+
+            body.WakeUp();
+            return;
+        }
+
+        body.isKinematic = true;
+        body.useGravity = false;
+        body.detectCollisions = true;
+        body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
     }
 
     private void ApplyDampingDefaults()
@@ -734,7 +965,7 @@ public class WorldItem : MonoBehaviour
         for (int i = 0; i < worldColliders.Length; i++)
         {
             Collider own = worldColliders[i];
-            if (own == null)
+            if (!IsValidSceneCollider(own))
             {
                 continue;
             }
@@ -742,7 +973,7 @@ public class WorldItem : MonoBehaviour
             for (int j = 0; j < otherColliders.Length; j++)
             {
                 Collider other = otherColliders[j];
-                if (other == null)
+                if (!IsValidSceneCollider(other) || other == own)
                 {
                     continue;
                 }
@@ -750,6 +981,33 @@ public class WorldItem : MonoBehaviour
                 Physics.IgnoreCollision(own, other, ignored);
             }
         }
+    }
+
+    private static bool IsValidSceneCollider(Collider colliderComponent)
+    {
+        if (colliderComponent == null)
+        {
+            return false;
+        }
+
+        if (!colliderComponent.enabled)
+        {
+            return false;
+        }
+
+        GameObject go = colliderComponent.gameObject;
+        if (go == null)
+        {
+            return false;
+        }
+
+        if (!go.activeInHierarchy)
+        {
+            return false;
+        }
+
+        Scene scene = go.scene;
+        return scene.IsValid() && scene.isLoaded;
     }
 
     private void SetCollidersEnabled(bool enabled)
@@ -769,6 +1027,110 @@ public class WorldItem : MonoBehaviour
 
             colliderComponent.enabled = enabled;
         }
+    }
+
+    private float ComputeSafeDropLift()
+    {
+        if (worldColliders == null || worldColliders.Length == 0)
+        {
+            return dropSurfaceLift;
+        }
+
+        bool hasBounds = false;
+        Bounds bounds = default;
+
+        for (int i = 0; i < worldColliders.Length; i++)
+        {
+            Collider colliderComponent = worldColliders[i];
+            if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger)
+            {
+                continue;
+            }
+
+            if (!hasBounds)
+            {
+                bounds = colliderComponent.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(colliderComponent.bounds);
+            }
+        }
+
+        if (!hasBounds)
+        {
+            return dropSurfaceLift;
+        }
+
+        float suggestedLift = Mathf.Clamp(bounds.extents.y * 0.2f, 0.03f, 0.25f);
+        return Mathf.Max(dropSurfaceLift, suggestedLift);
+    }
+
+    private void TrySnapKinematicDropToGround()
+    {
+        float halfHeight = 0.05f;
+        if (worldColliders != null && worldColliders.Length > 0)
+        {
+            bool hasBounds = false;
+            Bounds bounds = default;
+
+            for (int i = 0; i < worldColliders.Length; i++)
+            {
+                Collider colliderComponent = worldColliders[i];
+                if (colliderComponent == null || !colliderComponent.enabled || colliderComponent.isTrigger)
+                {
+                    continue;
+                }
+
+                if (!hasBounds)
+                {
+                    bounds = colliderComponent.bounds;
+                    hasBounds = true;
+                }
+                else
+                {
+                    bounds.Encapsulate(colliderComponent.bounds);
+                }
+            }
+
+            if (hasBounds)
+            {
+                halfHeight = Mathf.Max(halfHeight, bounds.extents.y);
+            }
+        }
+
+        Vector3 origin = transform.position + Vector3.up * Mathf.Max(0.2f, halfHeight + 0.2f);
+        RaycastHit[] hits = Physics.RaycastAll(origin, Vector3.down, 8f, ~0, QueryTriggerInteraction.Ignore);
+        if (hits == null || hits.Length == 0)
+        {
+            return;
+        }
+
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider hitCollider = hits[i].collider;
+            if (hitCollider == null || IsOwnCollider(hitCollider))
+            {
+                continue;
+            }
+
+            float lift = Mathf.Max(dropSurfaceLift, 0.02f);
+            transform.position = hits[i].point + Vector3.up * (halfHeight + lift);
+            Physics.SyncTransforms();
+            return;
+        }
+    }
+
+    private bool IsOwnCollider(Collider colliderComponent)
+    {
+        if (colliderComponent == null)
+        {
+            return false;
+        }
+
+        return colliderComponent.transform.IsChildOf(transform);
     }
 
     private bool IsProxyCollider(Collider colliderComponent)

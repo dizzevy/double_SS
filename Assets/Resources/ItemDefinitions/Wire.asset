@@ -10,13 +10,13 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c4d3e16d59fd4a6f8f2b7e9d0645b5cb, type: 3}
-  m_Name: PortalEssence
+  m_Name: Wire
   m_EditorClassIdentifier: Assembly-CSharp::ItemDefinition
-  itemId: portal_essence
-  displayName: Portal Essence
-  maxStack: 2
-  worldPrefab: {fileID: 1068509359014735044, guid: 27bbf901f342c5043b1a007e00e44ecf, type: 3}
+  itemId: wire
+  displayName: Wire
+  maxStack: 5
+  worldPrefab: {fileID: 541875205426203248, guid: 4adfe72aec04b2845a3055279a0dccbd, type: 3}
   holdLocalPosition: {x: 0, y: 0, z: 0}
   holdLocalEulerAngles: {x: 0, y: 0, z: 0}
-  linearDamping: 2.2
-  angularDamping: 3.2
+  linearDamping: 1.8
+  angularDamping: 2.4

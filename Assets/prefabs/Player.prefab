@@ -159,8 +159,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5d3c858b4db94037bd2947486f93ab9a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerInventory
-  capacity: 16
+  capacity: 18
   slots:
+  - item: {fileID: 0}
+    amount: 0
+  - item: {fileID: 0}
+    amount: 0
   - item: {fileID: 0}
     amount: 0
   - item: {fileID: 0}
@@ -209,14 +213,13 @@ MonoBehaviour:
   actionMapName: Player
   interactActionName: Interact
   dropActionName: Drop
-  storeActionName: Store
   nextSlotActionName: Next
   previousSlotActionName: Previous
   fallbackInteractKey: 19
   fallbackDropKey: 21
-  fallbackStoreKey: 20
   useNumberHotbarKeys: 1
   numberHotbarSlots: 10
+  pickupHotbarPrioritySlots: 10
   pickupDistance: 3
   pickupMask:
     serializedVersion: 2
